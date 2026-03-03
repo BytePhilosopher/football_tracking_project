@@ -15,7 +15,7 @@ PROCESSED_VIDEO = "data/processed/168_processed.mp4"
 MODEL_PATH = "models/best.pt"   # ✅ use your trained model
 
 # Step 1: Preprocess
-preprocess_video(RAW_VIDEO, PROCESSED_VIDEO)
+# preprocess_video(RAW_VIDEO, PROCESSED_VIDEO)
 
 # Step 2: Load modules
 detector = Detector(MODEL_PATH)
@@ -26,7 +26,7 @@ team_segmenter = TeamSegmenter()
 ball_interpolator = BallInterpolator()
 possession_tracker = PossessionTracker()
 
-cap = cv2.VideoCapture(PROCESSED_VIDEO)
+cap = cv2.VideoCapture(RAW_VIDEO)
 
 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 out = cv2.VideoWriter(
@@ -70,6 +70,38 @@ while True:
         # obj.cls -> class id
         # obj.xyxy -> bounding box
         # obj.id -> track id
+
+        # Normalize tuple/list outputs into an object with attributes .cls, .xyxy, .id
+        if isinstance(obj, (tuple, list)):
+            cls = None
+            tid = None
+            xyxy = None
+
+            # Try to detect bbox (4-element numeric sequence), class (0/1) and track id
+            for e in obj:
+                if isinstance(e, (list, tuple)) and len(e) == 4 and all(isinstance(v, (int, float)) for v in e):
+                    xyxy = e
+                elif isinstance(e, int):
+                    if e in (0, 1) and cls is None:
+                        cls = e
+                    elif tid is None:
+                        tid = e
+                elif isinstance(e, float):
+                    if e in (0.0, 1.0) and cls is None:
+                        cls = int(e)
+
+            # Fallback: if bbox not found, take first 4 numeric values
+            if xyxy is None:
+                nums = [x for x in obj if isinstance(x, (int, float))]
+                if len(nums) >= 4:
+                    xyxy = nums[:4]
+
+            from types import SimpleNamespace
+            obj = SimpleNamespace(
+                cls=cls if cls is not None else -1,
+                id=tid if tid is not None else -1,
+                xyxy=xyxy if xyxy is not None else (0, 0, 0, 0),
+            )
 
         if obj.cls == 0:   # player class
             players.append(obj)
