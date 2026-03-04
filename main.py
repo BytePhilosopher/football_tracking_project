@@ -14,7 +14,7 @@ from src.metadata import MetadataLogger
 # -----------------------------
 RAW_VIDEO = "data/raw/168.mp4"
 MODEL_PATH = "models/best.pt"
-OUTPUT_VIDEO = "data/processed/output.mp4"
+OUTPUT_VIDEO = "data/output.mp4"
 
 os.makedirs("data/processed", exist_ok=True)
 os.makedirs("data/annotations", exist_ok=True)
