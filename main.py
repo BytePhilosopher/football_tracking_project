@@ -55,11 +55,6 @@ print(f"Video Resolution: {width}x{height} @ {fps}fps")
 frame_id = 0
 team_fitted = False
 
-# Optional: get class name mapping if available
-class_names = None
-if hasattr(detector, "model") and hasattr(detector.model, "names"):
-    class_names = detector.model.names
-
 # -----------------------------
 # MAIN LOOP
 # -----------------------------
@@ -74,11 +69,11 @@ while True:
     detections = detector.detect(frame)
 
     # -------------------------
-    # 2️⃣ Tracking
+    # 2️⃣ Tracking (ByteTrack via Supervision)
     # -------------------------
-    tracked = tracker.update(detections if detections is not None else [])
+    tracked = tracker.update(detections)
 
-    if not tracked:
+    if tracked is None or len(tracked) == 0:
         out.write(frame)
         frame_id += 1
         continue
@@ -87,39 +82,30 @@ while True:
     balls = []
 
     # -------------------------
-    # 3️⃣ Separate Objects
+    # 3️⃣ Extract Objects from sv.Detections
     # -------------------------
-    for obj in tracked:
+    xyxy = tracked.xyxy
+    class_ids = tracked.class_id
+    tracker_ids = tracked.tracker_id
 
-        # If tracker returns tuples instead of objects
-        if isinstance(obj, (tuple, list)):
-            nums = [x for x in obj if isinstance(x, (int, float))]
-            if len(nums) >= 4:
-                xyxy = nums[:4]
-            else:
-                continue
+    for box, cls_id, track_id in zip(xyxy, class_ids, tracker_ids):
 
-            cls = int(obj[0]) if len(obj) > 0 else -1
-            tid = int(obj[1]) if len(obj) > 1 else -1
+        x1, y1, x2, y2 = box
+        cls_id = int(cls_id)
+        track_id = int(track_id) if track_id is not None else -1
 
-            obj = SimpleNamespace(cls=cls, id=tid, xyxy=xyxy)
+        obj = SimpleNamespace(
+            cls=cls_id,
+            id=track_id,
+            xyxy=[x1, y1, x2, y2]
+        )
 
-        if not hasattr(obj, "cls") or not hasattr(obj, "xyxy"):
-            continue
+        # Class filtering based on your data.yml
+        if cls_id in [1, 2, 3]:   # goalkeeper, players, referee
+            players.append(obj)
 
-        # Use class names if available
-        if class_names:
-            cls_name = class_names.get(obj.cls, "")
-            if cls_name.lower() == "player":
-                players.append(obj)
-            elif cls_name.lower() == "ball":
-                balls.append(obj)
-        else:
-            # Fallback (modify if your classes differ)
-            if obj.cls == 0:
-                players.append(obj)
-            elif obj.cls == 1:
-                balls.append(obj)
+        elif cls_id == 0:         # ball
+            balls.append(obj)
 
     # -------------------------
     # 4️⃣ Team Clustering
