@@ -1,23 +1,27 @@
 import cv2
 import os
+from types import SimpleNamespace
 
 from src.ball_interpolator import BallInterpolator
 from src.possession import PossessionTracker
-from src.preprocess import preprocess_video
 from src.detector import Detector
 from src.team_segmentation import TeamSegmenter
 from src.tracker import Tracker
 from src.metadata import MetadataLogger
-from src.utils import draw_boxes
 
+# -----------------------------
+# PATHS
+# -----------------------------
 RAW_VIDEO = "data/raw/168.mp4"
-PROCESSED_VIDEO = "data/processed/168_processed.mp4"
-MODEL_PATH = "models/best.pt"   # ✅ use your trained model
+MODEL_PATH = "models/best.pt"
+OUTPUT_VIDEO = "data/processed/output.mp4"
 
-# Step 1: Preprocess
-# preprocess_video(RAW_VIDEO, PROCESSED_VIDEO)
+os.makedirs("data/processed", exist_ok=True)
+os.makedirs("data/annotations", exist_ok=True)
 
-# Step 2: Load modules
+# -----------------------------
+# LOAD MODULES
+# -----------------------------
 detector = Detector(MODEL_PATH)
 tracker = Tracker()
 logger = MetadataLogger("data/annotations")
@@ -26,132 +30,140 @@ team_segmenter = TeamSegmenter()
 ball_interpolator = BallInterpolator()
 possession_tracker = PossessionTracker()
 
+# -----------------------------
+# VIDEO SETUP
+# -----------------------------
 cap = cv2.VideoCapture(RAW_VIDEO)
+
+if not cap.isOpened():
+    raise RuntimeError("❌ Cannot open video.")
+
+width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+fps = cap.get(cv2.CAP_PROP_FPS)
 
 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 out = cv2.VideoWriter(
-    "data/processed/output.mp4",
+    OUTPUT_VIDEO,
     fourcc,
-    15,
-    (1280, int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+    fps if fps > 0 else 25,
+    (width, height)
 )
 
-frame_id = 0
-team_fitted = False  # ensure clustering happens once
+print(f"Video Resolution: {width}x{height} @ {fps}fps")
 
+frame_id = 0
+team_fitted = False
+
+# Optional: get class name mapping if available
+class_names = None
+if hasattr(detector, "model") and hasattr(detector.model, "names"):
+    class_names = detector.model.names
+
+# -----------------------------
+# MAIN LOOP
+# -----------------------------
 while True:
     ret, frame = cap.read()
     if not ret:
         break
 
-    # ----------------------------------
+    # -------------------------
     # 1️⃣ Detection
-    # ----------------------------------
+    # -------------------------
     detections = detector.detect(frame)
 
-    # ----------------------------------
+    # -------------------------
     # 2️⃣ Tracking
-    # ----------------------------------
-    tracked = tracker.update(detections if detections is not None else None)
+    # -------------------------
+    tracked = tracker.update(detections if detections is not None else [])
 
     if not tracked:
         out.write(frame)
         frame_id += 1
         continue
 
-    # ----------------------------------
-    # 3️⃣ Separate Players & Ball
-    # ----------------------------------
     players = []
     balls = []
 
+    # -------------------------
+    # 3️⃣ Separate Objects
+    # -------------------------
     for obj in tracked:
-        # assuming:
-        # obj.cls -> class id
-        # obj.xyxy -> bounding box
-        # obj.id -> track id
 
-        # Normalize tuple/list outputs into an object with attributes .cls, .xyxy, .id
+        # If tracker returns tuples instead of objects
         if isinstance(obj, (tuple, list)):
-            cls = None
-            tid = None
-            xyxy = None
+            nums = [x for x in obj if isinstance(x, (int, float))]
+            if len(nums) >= 4:
+                xyxy = nums[:4]
+            else:
+                continue
 
-            # Try to detect bbox (4-element numeric sequence), class (0/1) and track id
-            for e in obj:
-                if isinstance(e, (list, tuple)) and len(e) == 4 and all(isinstance(v, (int, float)) for v in e):
-                    xyxy = e
-                elif isinstance(e, int):
-                    if e in (0, 1) and cls is None:
-                        cls = e
-                    elif tid is None:
-                        tid = e
-                elif isinstance(e, float):
-                    if e in (0.0, 1.0) and cls is None:
-                        cls = int(e)
+            cls = int(obj[0]) if len(obj) > 0 else -1
+            tid = int(obj[1]) if len(obj) > 1 else -1
 
-            # Fallback: if bbox not found, take first 4 numeric values
-            if xyxy is None:
-                nums = [x for x in obj if isinstance(x, (int, float))]
-                if len(nums) >= 4:
-                    xyxy = nums[:4]
+            obj = SimpleNamespace(cls=cls, id=tid, xyxy=xyxy)
 
-            from types import SimpleNamespace
-            obj = SimpleNamespace(
-                cls=cls if cls is not None else -1,
-                id=tid if tid is not None else -1,
-                xyxy=xyxy if xyxy is not None else (0, 0, 0, 0),
-            )
+        if not hasattr(obj, "cls") or not hasattr(obj, "xyxy"):
+            continue
 
-        if obj.cls == 0:   # player class
-            players.append(obj)
-        elif obj.cls == 1: # ball class
-            balls.append(obj)
+        # Use class names if available
+        if class_names:
+            cls_name = class_names.get(obj.cls, "")
+            if cls_name.lower() == "player":
+                players.append(obj)
+            elif cls_name.lower() == "ball":
+                balls.append(obj)
+        else:
+            # Fallback (modify if your classes differ)
+            if obj.cls == 0:
+                players.append(obj)
+            elif obj.cls == 1:
+                balls.append(obj)
 
-    # ----------------------------------
-    # 4️⃣ Team Clustering (fit once)
-    # ----------------------------------
+    # -------------------------
+    # 4️⃣ Team Clustering
+    # -------------------------
     if not team_fitted and len(players) >= 2:
         team_segmenter.fit(frame, players)
         team_fitted = True
 
     for player in players:
-        team_id = team_segmenter.assign_team(frame, player)
-        player.team = team_id  # dynamically attach attribute
+        try:
+            player.team = team_segmenter.assign_team(frame, player)
+        except:
+            player.team = -1
 
-    # ----------------------------------
+    # -------------------------
     # 5️⃣ Ball Interpolation
-    # ----------------------------------
+    # -------------------------
     ball_obj = balls[0] if len(balls) > 0 else None
     ball_position = ball_interpolator.update(frame_id, ball_obj)
 
-    # ----------------------------------
+    # -------------------------
     # 6️⃣ Possession Detection
-    # ----------------------------------
+    # -------------------------
     possessor_id = possession_tracker.update(ball_position, players)
 
-    # ----------------------------------
-    # 7️⃣ Visualization Enhancements
-    # ----------------------------------
+    # -------------------------
+    # 7️⃣ Drawing
+    # -------------------------
     annotated = frame.copy()
 
-    # Draw players
     for player in players:
         x1, y1, x2, y2 = map(int, player.xyxy)
 
+        # Default color
+        color = (200, 200, 200)
+
         if hasattr(player, "team"):
             if player.team == 0:
-                color = (255, 0, 0)  # Blue
+                color = (255, 0, 0)
             elif player.team == 1:
-                color = (0, 0, 255)  # Red
-            else:
-                color = (200, 200, 200)
-        else:
-            color = (200, 200, 200)
+                color = (0, 0, 255)
 
-        # Highlight possessor
         if player.id == possessor_id:
-            color = (0, 255, 255)  # Yellow highlight
+            color = (0, 255, 255)
 
         cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
         cv2.putText(
@@ -164,19 +176,24 @@ while True:
             2
         )
 
-    # Draw ball
+    # Draw Ball
     if ball_position is not None:
-        bx, by = ball_position
+        bx, by = map(int, ball_position)
         cv2.circle(annotated, (bx, by), 6, (0, 255, 0), -1)
 
-    # ----------------------------------
+    # -------------------------
     # 8️⃣ Logging
-    # ----------------------------------
+    # -------------------------
     logger.log(frame_id, tracked)
 
     out.write(annotated)
     frame_id += 1
 
+# -----------------------------
+# CLEANUP
+# -----------------------------
 cap.release()
 out.release()
 logger.save()
+
+print("✅ Processing complete. Output saved to:", OUTPUT_VIDEO)
