@@ -56,7 +56,7 @@ class TeamSegmenter:
 
         # Top 55 % = torso / jersey area, avoids shorts & pitch
         torso = crop[:max(1, int(h * 0.55)), :]
-        hsv   = cv2.cvtColor(torso, cv2.COLOR_BGR2HSV).reshape(-1, 3).astype(np.float32)
+        hsv   = cv2.cvtColor(torso, cv2.COLOR_BGR2HSV).reshape(-1, 3).astype(np.float64)
 
         # Mask grass: vivid green hue (OpenCV H is 0-180, green ≈ 35-85)
         # Only remove pixels that are BOTH green-hued AND highly saturated (real grass).
