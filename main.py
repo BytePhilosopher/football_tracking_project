@@ -2,184 +2,163 @@ import cv2
 import os
 from types import SimpleNamespace
 
+from tqdm import tqdm
+
 from src.ball_interpolator import BallInterpolator
 from src.possession import PossessionTracker
 from src.detector import Detector
 from src.team_segmentation import TeamSegmenter
 from src.tracker import Tracker
 from src.metadata import MetadataLogger
+from src.utils import draw_player, draw_ball, draw_hud
 
-# -----------------------------
-# PATHS
-# -----------------------------
-RAW_VIDEO = "data/raw/168.mp4"
-MODEL_PATH = "models/best.pt"
-OUTPUT_VIDEO = "data/output.mp4"
+# ──────────────────────────────────────────────
+# CONFIG
+# ──────────────────────────────────────────────
+RAW_VIDEO    = "data/raw/168.mp4"
+MODEL_PATH   = "models/best.pt"
+OUTPUT_VIDEO = "data/processed/168_tracked.mp4"
 
-os.makedirs("data/processed", exist_ok=True)
+TEAM_FIT_FRAMES  = 10     # collect players from this many frames before fitting teams
+PLAYER_CLASS_IDS = {1, 2, 3}   # goalkeeper=1, player=2, referee=3  (match your data.yml)
+BALL_CLASS_ID    = 0
+
+os.makedirs("data/processed",   exist_ok=True)
 os.makedirs("data/annotations", exist_ok=True)
 
-# -----------------------------
+# ──────────────────────────────────────────────
 # LOAD MODULES
-# -----------------------------
-detector = Detector(MODEL_PATH)
-tracker = Tracker()
-logger = MetadataLogger("data/annotations")
-
-team_segmenter = TeamSegmenter()
+# ──────────────────────────────────────────────
+detector          = Detector(MODEL_PATH, conf=0.35, iou=0.45, imgsz=1280)
+tracker           = Tracker()
+logger            = MetadataLogger("data/annotations")
+team_segmenter    = TeamSegmenter()
 ball_interpolator = BallInterpolator()
 possession_tracker = PossessionTracker()
 
-# -----------------------------
+# ──────────────────────────────────────────────
 # VIDEO SETUP
-# -----------------------------
+# ──────────────────────────────────────────────
 cap = cv2.VideoCapture(RAW_VIDEO)
-
 if not cap.isOpened():
-    raise RuntimeError("❌ Cannot open video.")
+    raise RuntimeError("Cannot open video: " + RAW_VIDEO)
 
-width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-fps = cap.get(cv2.CAP_PROP_FPS)
+fps    = cap.get(cv2.CAP_PROP_FPS) or 25.0
+total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-out = cv2.VideoWriter(
-    OUTPUT_VIDEO,
-    fourcc,
-    fps if fps > 0 else 25,
-    (width, height)
-)
+fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+out    = cv2.VideoWriter(OUTPUT_VIDEO, fourcc, fps, (width, height))
 
-print(f"Video Resolution: {width}x{height} @ {fps}fps")
+print(f"Input  : {RAW_VIDEO}")
+print(f"Output : {OUTPUT_VIDEO}")
+print(f"Video  : {width}x{height} @ {fps:.1f} fps  ({total_frames} frames)")
 
-frame_id = 0
+# ──────────────────────────────────────────────
+# MAIN LOOP
+# ──────────────────────────────────────────────
+frame_id    = 0
 team_fitted = False
 
-# -----------------------------
-# MAIN LOOP
-# -----------------------------
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        break
+with tqdm(total=total_frames, unit="frame", desc="Tracking") as pbar:
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
 
-    # -------------------------
-    # 1️⃣ Detection
-    # -------------------------
-    detections = detector.detect(frame)
+        # ── 1. Detection ──────────────────────────────
+        detections = detector.detect(frame)
 
-    # -------------------------
-    # 2️⃣ Tracking (ByteTrack via Supervision)
-    # -------------------------
-    tracked = tracker.update(detections)
+        # ── 2. Tracking ───────────────────────────────
+        tracked = tracker.update(detections)
 
-    if tracked is None or len(tracked) == 0:
-        out.write(frame)
-        frame_id += 1
-        continue
+        if tracked is None or len(tracked) == 0:
+            out.write(frame)
+            frame_id += 1
+            pbar.update(1)
+            continue
 
-    players = []
-    balls = []
+        # ── 3. Split detections into players / balls ──
+        players: list = []
+        balls:   list = []
 
-    # -------------------------
-    # 3️⃣ Extract Objects from sv.Detections
-    # -------------------------
-    xyxy = tracked.xyxy
-    class_ids = tracked.class_id
-    tracker_ids = tracked.tracker_id
+        xyxy       = tracked.xyxy
+        class_ids  = tracked.class_id
+        tracker_ids = tracked.tracker_id
+        confidences = tracked.confidence if tracked.confidence is not None else [None] * len(xyxy)
 
-    for box, cls_id, track_id in zip(xyxy, class_ids, tracker_ids):
+        for box, cls_id, track_id, conf in zip(xyxy, class_ids, tracker_ids, confidences):
+            x1, y1, x2, y2 = box
+            cls_id   = int(cls_id)
+            track_id = int(track_id) if track_id is not None else -1
 
-        x1, y1, x2, y2 = box
-        cls_id = int(cls_id)
-        track_id = int(track_id) if track_id is not None else -1
+            obj = SimpleNamespace(
+                cls=cls_id,
+                id=track_id,
+                xyxy=[x1, y1, x2, y2],
+                conf=float(conf) if conf is not None else 0.0,
+                team=-1,
+            )
 
-        obj = SimpleNamespace(
-            cls=cls_id,
-            id=track_id,
-            xyxy=[x1, y1, x2, y2]
-        )
+            if cls_id in PLAYER_CLASS_IDS:
+                players.append(obj)
+            elif cls_id == BALL_CLASS_ID:
+                balls.append(obj)
 
-        # Class filtering based on your data.yml
-        if cls_id in [1, 2, 3]:   # goalkeeper, players, referee
-            players.append(obj)
+        # ── 4. Team segmentation ──────────────────────
+        # Accumulate samples for the first TEAM_FIT_FRAMES frames, then fit once.
+        if not team_fitted and frame_id <= TEAM_FIT_FRAMES:
+            fitted = team_segmenter.fit(frame, players)
+            if fitted:
+                team_fitted = True
 
-        elif cls_id == 0:         # ball
-            balls.append(obj)
-
-    # -------------------------
-    # 4️⃣ Team Clustering
-    # -------------------------
-    if not team_fitted and len(players) >= 2:
-        team_segmenter.fit(frame, players)
-        team_fitted = True
-
-    for player in players:
-        try:
+        for player in players:
             player.team = team_segmenter.assign_team(frame, player)
-        except:
-            player.team = -1
 
-    # -------------------------
-    # 5️⃣ Ball Interpolation
-    # -------------------------
-    ball_obj = balls[0] if len(balls) > 0 else None
-    ball_position = ball_interpolator.update(frame_id, ball_obj)
+        # ── 5. Ball interpolation ─────────────────────
+        ball_obj      = balls[0] if balls else None
+        ball_position = ball_interpolator.update(frame_id, ball_obj)
+        ball_interp   = ball_interpolator.is_interpolating
 
-    # -------------------------
-    # 6️⃣ Possession Detection
-    # -------------------------
-    possessor_id = possession_tracker.update(ball_position, players)
+        # ── 6. Possession ─────────────────────────────
+        possessor_id = possession_tracker.update(ball_position, players)
 
-    # -------------------------
-    # 7️⃣ Drawing
-    # -------------------------
-    annotated = frame.copy()
+        # ── 7. Draw ───────────────────────────────────
+        annotated = frame.copy()
 
-    for player in players:
-        x1, y1, x2, y2 = map(int, player.xyxy)
+        for player in players:
+            draw_player(annotated, player, possessor_id)
 
-        # Default color
-        color = (200, 200, 200)
+        draw_ball(annotated, ball_position, interpolated=ball_interp)
 
-        if hasattr(player, "team"):
-            if player.team == 0:
-                color = (255, 0, 0)
-            elif player.team == 1:
-                color = (0, 0, 255)
+        poss_pct = possession_tracker.possession_percentages()
+        draw_hud(annotated, frame_id, fps, poss_pct)
 
-        if player.id == possessor_id:
-            color = (0, 255, 255)
-
-        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
-        cv2.putText(
-            annotated,
-            f"ID:{player.id}",
-            (x1, y1 - 10),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            color,
-            2
+        # ── 8. Log ────────────────────────────────────
+        logger.log(
+            frame_id,
+            tracked,
+            players=players,
+            possessor_id=possessor_id,
+            ball_position=ball_position,
+            ball_interpolated=ball_interp,
         )
 
-    # Draw Ball
-    if ball_position is not None:
-        bx, by = map(int, ball_position)
-        cv2.circle(annotated, (bx, by), 6, (0, 255, 0), -1)
+        out.write(annotated)
+        frame_id += 1
+        pbar.update(1)
 
-    # -------------------------
-    # 8️⃣ Logging
-    # -------------------------
-    logger.log(frame_id, tracked)
-
-    out.write(annotated)
-    frame_id += 1
-
-# -----------------------------
-# CLEANUP
-# -----------------------------
+# ──────────────────────────────────────────────
+# CLEANUP & PIPELINE
+# ──────────────────────────────────────────────
 cap.release()
 out.release()
 logger.save()
 
-print("✅ Processing complete. Output saved to:", OUTPUT_VIDEO)
+print(f"\nOutput video saved: {OUTPUT_VIDEO}")
+
+# Run the post-processing data pipeline
+print("\nRunning data pipeline ...")
+from src.data_pipeline import run_pipeline
+run_pipeline("data/annotations/tracking.csv", "data/annotations", fps=fps)

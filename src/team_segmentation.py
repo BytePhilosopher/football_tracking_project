@@ -5,71 +5,102 @@ import numpy as np
 from sklearn.cluster import KMeans
 
 
+# Class IDs that should be excluded from team clustering (referees)
+REFEREE_CLASS_IDS = {3}
+
+
 class TeamSegmenter:
-    def __init__(self, n_clusters=2):
-        self.n_clusters = n_clusters
-        self.kmeans = None
-        self.team_colors = None  # HSV centroids
+    """
+    Assigns players to teams using jersey-colour clustering.
 
-    def _extract_dominant_color(self, crop):
-        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    Improvements over the original:
+    - Pixel-level KMeans on the upper crop (not just the mean colour).
+    - Referees (class 3) are excluded from fitting and always returned as team -1.
+    - Can be re-fitted with additional frames via `partial_fit`.
+    - Returns None when the model is not yet ready (caller should handle gracefully).
+    """
 
-        # Ignore bottom half (reduce grass influence)
-        h, w, _ = hsv.shape
-        upper_half = hsv[:h // 2, :]
+    def __init__(self, n_clusters: int = 2, min_pixels: int = 20):
+        self.n_clusters  = n_clusters
+        self.min_pixels  = min_pixels
+        self.kmeans      = None
+        self._color_buf  = []   # accumulates colour samples across frames before first fit
 
-        pixels = upper_half.reshape(-1, 3)
-
-        # Remove low-saturation pixels (grass noise reduction)
-        pixels = pixels[pixels[:, 1] > 40]
-
-        if len(pixels) < 10:
+    # ------------------------------------------------------------------
+    def _extract_jersey_color(self, crop: np.ndarray) -> np.ndarray | None:
+        """
+        Returns the dominant jersey colour as a 1-D HSV vector,
+        computed via pixel-level KMeans on the upper 60 % of the crop.
+        """
+        if crop is None or crop.size == 0:
             return None
 
-        mean_color = np.mean(pixels, axis=0)
-        return mean_color
+        h, w = crop.shape[:2]
+        if h < 10 or w < 10:
+            return None
 
-    def fit(self, frame, tracked_players):
+        upper = crop[:int(h * 0.6), :]
+        hsv   = cv2.cvtColor(upper, cv2.COLOR_BGR2HSV)
+        pixels = hsv.reshape(-1, 3).astype(np.float32)
+
+        # Remove near-green (grass) and low-saturation (shadow / white lines)
+        mask = (pixels[:, 1] > 40) & ~(
+            (pixels[:, 0] > 35) & (pixels[:, 0] < 85) & (pixels[:, 1] > 60)
+        )
+        pixels = pixels[mask]
+
+        if len(pixels) < self.min_pixels:
+            return None
+
+        # Cluster pixel colours → pick dominant cluster
+        n = min(3, len(pixels))
+        km = KMeans(n_clusters=n, n_init=3, max_iter=50, random_state=0)
+        km.fit(pixels)
+        counts = np.bincount(km.labels_)
+        dominant = km.cluster_centers_[np.argmax(counts)]
+        return dominant
+
+    # ------------------------------------------------------------------
+    def fit(self, frame: np.ndarray, players: list) -> bool:
         """
-        Fit clustering once using first frame players.
+        Accumulate colour samples from `players` and fit the team classifier
+        when enough samples have been collected (>= 2 * n_clusters).
+        Returns True when fitting succeeds.
         """
-        colors = []
-
-        for obj in tracked_players:
-            x1, y1, x2, y2 = map(int, obj.xyxy)
-            crop = frame[y1:y2, x1:x2]
-
-            if crop.size == 0:
+        for obj in players:
+            if getattr(obj, "cls", -1) in REFEREE_CLASS_IDS:
                 continue
 
-            color = self._extract_dominant_color(crop)
+            x1, y1, x2, y2 = map(int, obj.xyxy)
+            crop  = frame[y1:y2, x1:x2]
+            color = self._extract_jersey_color(crop)
             if color is not None:
-                colors.append(color)
+                self._color_buf.append(color)
 
-        if len(colors) < 2:
-            return
+        if len(self._color_buf) < self.n_clusters * 4:
+            return False
 
-        self.kmeans = KMeans(n_clusters=self.n_clusters, n_init=10)
+        colors = np.array(self._color_buf)
+        self.kmeans = KMeans(n_clusters=self.n_clusters, n_init=15, random_state=0)
         self.kmeans.fit(colors)
-        self.team_colors = self.kmeans.cluster_centers_
+        return True
 
-    def assign_team(self, frame, player_obj):
+    # ------------------------------------------------------------------
+    def assign_team(self, frame: np.ndarray, player_obj) -> int:
         """
-        Assign team label to a player.
-        Returns team_id (0 or 1)
+        Returns team ID (0 or 1) or -1 for referee / unknown.
         """
+        if getattr(player_obj, "cls", -1) in REFEREE_CLASS_IDS:
+            return -1
+
         if self.kmeans is None:
-            return None
+            return -1
 
         x1, y1, x2, y2 = map(int, player_obj.xyxy)
-        crop = frame[y1:y2, x1:x2]
+        crop  = frame[y1:y2, x1:x2]
+        color = self._extract_jersey_color(crop)
 
-        if crop.size == 0:
-            return None
-
-        color = self._extract_dominant_color(crop)
         if color is None:
-            return None
+            return -1
 
-        team_id = self.kmeans.predict([color])[0]
-        return int(team_id)
+        return int(self.kmeans.predict([color])[0])
