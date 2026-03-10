@@ -19,7 +19,6 @@ RAW_VIDEO    = "data/raw/168.mp4"
 MODEL_PATH   = "models/best.pt"
 OUTPUT_VIDEO = "data/processed/168_tracked.mp4"
 
-TEAM_FIT_FRAMES  = 10     # collect players from this many frames before fitting teams
 PLAYER_CLASS_IDS = {1, 2, 3}   # goalkeeper=1, player=2, referee=3  (match your data.yml)
 BALL_CLASS_ID    = 0
 
@@ -107,11 +106,10 @@ with tqdm(total=total_frames, unit="frame", desc="Tracking") as pbar:
                 balls.append(obj)
 
         # ── 4. Team segmentation ──────────────────────
-        # Accumulate samples for the first TEAM_FIT_FRAMES frames, then fit once.
-        if not team_fitted and frame_id <= TEAM_FIT_FRAMES:
-            fitted = team_segmenter.fit(frame, players)
-            if fitted:
-                team_fitted = True
+        # Keep accumulating colour samples until we have enough to fit KMeans.
+        # No frame-count limit — fitting stops automatically once successful.
+        if not team_fitted:
+            team_fitted = team_segmenter.fit(frame, players)
 
         for player in players:
             player.team = team_segmenter.assign_team(frame, player)
