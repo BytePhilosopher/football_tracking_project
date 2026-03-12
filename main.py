@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from tqdm import tqdm
 
 from src.ball_interpolator import BallInterpolator
+from src.camera_compensation import CameraCompensation
 from src.possession import PossessionTracker
 from src.detector import Detector
 from src.team_segmentation import TeamSegmenter
@@ -28,12 +29,14 @@ os.makedirs("data/annotations", exist_ok=True)
 # ──────────────────────────────────────────────
 # LOAD MODULES
 # ──────────────────────────────────────────────
-detector          = Detector(MODEL_PATH, conf=0.35, iou=0.45, imgsz=1280)
-tracker           = Tracker()
-logger            = MetadataLogger("data/annotations")
-team_segmenter    = TeamSegmenter()
-ball_interpolator = BallInterpolator()
-possession_tracker = PossessionTracker()
+detector           = Detector(MODEL_PATH, conf=0.35, iou=0.45, imgsz=1280)
+tracker            = Tracker()
+cam_comp           = CameraCompensation()
+logger             = MetadataLogger("data/annotations")
+team_segmenter     = TeamSegmenter()
+ball_interpolator  = BallInterpolator()
+# Paper §3.4 defaults: Tin=50px enter, Tout=70px exit, K=5 frames to confirm switch
+possession_tracker = PossessionTracker(Tin=50, Tout=70, K=5)
 
 # ──────────────────────────────────────────────
 # VIDEO SETUP
@@ -69,8 +72,13 @@ with tqdm(total=total_frames, unit="frame", desc="Tracking") as pbar:
         # ── 1. Detection ──────────────────────────────
         detections = detector.detect(frame)
 
+        # ── 1b. Camera-motion compensation ────────────
+        # Estimate how much the camera moved since the last frame so the
+        # tracker's Kalman predictions stay accurate during pans.
+        camera_shift = cam_comp.update(frame)
+
         # ── 2. Tracking ───────────────────────────────
-        tracked = tracker.update(detections)
+        tracked = tracker.update(detections, camera_shift)
 
         if tracked is None or len(tracked) == 0:
             out.write(frame)

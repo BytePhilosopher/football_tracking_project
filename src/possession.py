@@ -1,4 +1,16 @@
 # src/possession.py
+"""
+Ball possession tracker with Tin/Tout hysteresis and minimum-switch-duration.
+
+Based on the paper's possession model (§3.4):
+  - A player *enters* possession when their feet distance to ball < Tin.
+  - The current possessor *loses* possession when their distance > Tout.
+    (Tout > Tin creates a hysteresis band that suppresses flickering.)
+  - A new candidate must remain the closest player for K consecutive frames
+    before possession is transferred.  From Table 4: K too small → oscillation;
+    K too large → misses real transitions.  Default K=5 is a robust starting
+    point from the paper's sensitivity analysis.
+"""
 
 import numpy as np
 from collections import defaultdict
@@ -6,73 +18,117 @@ from collections import defaultdict
 
 class PossessionTracker:
     """
-    Determines which player has possession and tracks team-level stats.
+    Determines which player has possession and tracks team-level statistics.
 
-    Improvements over the original:
-    - Uses feet position (bottom-centre of bounding box) instead of the
-      centroid, which is more physically meaningful for ball proximity.
-    - Adds hysteresis: the current possessor keeps the ball until another
-      player is at least `hysteresis` pixels closer, reducing flickering.
-    - Maintains frame-level possession counts per team for HUD display.
+    Parameters
+    ----------
+    Tin  : float  Distance (px) to *enter* possession.
+    Tout : float  Distance (px) to *exit* possession.  Must be ≥ Tin.
+    K    : int    Minimum consecutive frames a new candidate must be closest
+                  before the current possessor is replaced.
     """
 
-    def __init__(self, distance_threshold: int = 60, hysteresis: int = 15):
-        self.distance_threshold = distance_threshold
-        self.hysteresis         = hysteresis
+    def __init__(
+        self,
+        Tin:  float = 50,   # pixels — enter possession
+        Tout: float = 70,   # pixels — exit possession  (Tout ≥ Tin)
+        K:    int   = 5,    # consecutive frames to confirm a switch
+    ):
+        assert Tout >= Tin, "Tout must be ≥ Tin"
+        self.Tin  = Tin
+        self.Tout = Tout
+        self.K    = K
 
-        self.current_possessor   = None   # tracker_id
-        self.current_team        = None   # team_id of possessor
-        self.possession_frames: dict[int, int] = defaultdict(int)  # team_id → frame count
+        self.current_possessor: int | None = None
+        self.current_team:      int | None = None
 
-    # ------------------------------------------------------------------
-    def update(self, ball_position, tracked_players: list):
+        # Rolling candidate (proposed new possessor before K frames confirm)
+        self._candidate_id:     int | None = None
+        self._candidate_frames: int        = 0
+
+        self.possession_frames: dict[int, int] = defaultdict(int)
+
+    # ── update ──────────────────────────────────────────────────────────────
+
+    def update(self, ball_position, tracked_players: list) -> int | None:
         """
-        ball_position : (x, y) or None
+        ball_position   : (x, y) or None
         tracked_players : list of SimpleNamespace with .id, .xyxy, .team
-        Returns tracker_id of current possessor (may be None).
+        Returns tracker_id of the current possessor (may be None).
         """
         if ball_position is None or not tracked_players:
-            # Accumulate time for the last known possessor's team
             if self.current_team is not None and self.current_team >= 0:
                 self.possession_frames[self.current_team] += 1
             return self.current_possessor
 
-        bx, by = ball_position
-        min_dist      = float("inf")
-        best_id       = None
-        best_team     = None
+        bx, by    = ball_position
+        min_dist  = float("inf")
+        best_id   = None
+        best_team = None
 
         for player in tracked_players:
             x1, _, x2, y2 = player.xyxy
-            # Feet position = bottom-centre of bounding box
             px = (x1 + x2) / 2.0
-            py = float(y2)
-            dist = np.hypot(px - bx, py - by)
-
-            if dist < min_dist:
-                min_dist  = dist
+            py = float(y2)          # feet position (bottom-centre of bbox)
+            d  = np.hypot(px - bx, py - by)
+            if d < min_dist:
+                min_dist  = d
                 best_id   = player.id
                 best_team = getattr(player, "team", -1)
 
-        # Hysteresis: only switch possessor if the new candidate is
-        # meaningfully closer, or if we had no possessor yet.
-        if min_dist < self.distance_threshold:
-            if self.current_possessor is None or best_id == self.current_possessor:
+        # ── state machine ───────────────────────────────────────────────────
+
+        if self.current_possessor is None:
+            # No active possessor — award immediately if within Tin
+            if min_dist < self.Tin:
                 self.current_possessor = best_id
                 self.current_team      = best_team
+                self._reset_candidate()
+
+        else:
+            cur_dist = self._distance_of(
+                self.current_possessor, bx, by, tracked_players
+            )
+
+            if best_id == self.current_possessor:
+                # Same player still closest — keep possession unconditionally
+                self._reset_candidate()
+
+            elif cur_dist is not None and cur_dist <= self.Tout:
+                # Current possessor is still within Tout; someone else is
+                # closer — accumulate K frames before switching.
+                if min_dist < self.Tin:
+                    if best_id == self._candidate_id:
+                        self._candidate_frames += 1
+                    else:
+                        self._candidate_id     = best_id
+                        self._candidate_frames = 1
+
+                    if self._candidate_frames >= self.K:
+                        self.current_possessor = self._candidate_id
+                        self.current_team      = best_team
+                        self._reset_candidate()
+                else:
+                    self._reset_candidate()
+
             else:
-                # Compute distance of current possessor to ball
-                cur_dist = self._distance_of(self.current_possessor, bx, by, tracked_players)
-                if cur_dist is None or (min_dist + self.hysteresis) < cur_dist:
+                # Current possessor left the Tout zone
+                if min_dist < self.Tin:
                     self.current_possessor = best_id
                     self.current_team      = best_team
+                else:
+                    self.current_possessor = None
+                    self.current_team      = None
+                self._reset_candidate()
 
+        # ── accumulate team possession frames ────────────────────────────
         if self.current_team is not None and self.current_team >= 0:
             self.possession_frames[self.current_team] += 1
 
         return self.current_possessor
 
-    # ------------------------------------------------------------------
+    # ── utilities ───────────────────────────────────────────────────────────
+
     def possession_percentages(self) -> dict[int, float]:
         """Returns {team_id: percentage} for all teams seen."""
         total = sum(self.possession_frames.values())
@@ -80,13 +136,14 @@ class PossessionTracker:
             return {}
         return {t: 100.0 * v / total for t, v in self.possession_frames.items()}
 
-    # ------------------------------------------------------------------
+    def _reset_candidate(self) -> None:
+        self._candidate_id     = None
+        self._candidate_frames = 0
+
     @staticmethod
     def _distance_of(target_id, bx, by, players):
         for p in players:
             if p.id == target_id:
                 x1, _, x2, y2 = p.xyxy
-                px = (x1 + x2) / 2.0
-                py = float(y2)
-                return np.hypot(px - bx, py - by)
+                return np.hypot((x1 + x2) / 2.0 - bx, float(y2) - by)
         return None
