@@ -245,6 +245,13 @@ else:
         with open(_img_path, "rb") as f:
             _IMG_B64 = base64.b64encode(f.read()).decode()
 
+    # Load about image (bottom section image)
+    _ABOUT_IMG_B64 = ""
+    _about_img_path = os.path.join(os.path.dirname(__file__), "images", "image.png")
+    if os.path.exists(_about_img_path):
+        with open(_about_img_path, "rb") as f:
+            _ABOUT_IMG_B64 = base64.b64encode(f.read()).decode()
+
     # All landing-page classes use "lp-" prefix to avoid any conflict
     # with the shared CSS in utils.py
     st.markdown("""
@@ -338,6 +345,24 @@ else:
         color: #dc2626;
     }
     .lp-hero-icon svg { width: 20px; height: 20px; }
+    .lp-hero-enter {
+        display: inline-block;
+        position: absolute;
+        right: clamp(1rem, 3vw, 2rem);
+        bottom: 1rem;
+        margin: 0;
+        padding: 0.48rem 1.05rem;
+        border-radius: 9px;
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+        color: #f5f5f5 !important;
+        text-decoration: none !important;
+        background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+        border: 1px solid rgba(220,38,38,0.35);
+        box-shadow: 0 2px 16px rgba(220,38,38,0.22);
+        z-index: 2;
+    }
 
     /* Hero + CTA row (headline | Enter pipeline) */
     .main .block-container [data-testid="stHorizontalBlock"]:has(.lp-hero--split) {
@@ -357,11 +382,12 @@ else:
         justify-content: flex-start;
     }
     .lp-inner--split {
+        position: relative;
         text-align: left !important;
         margin: 0 !important;
         max-width: none !important;
         width: 100%;
-        padding: 2.5rem clamp(1rem, 3vw, 2rem) 2.25rem clamp(1.25rem, 3.5vw, 2.25rem) !important;
+        padding: 2.5rem clamp(1rem, 3vw, 2rem) 4.35rem clamp(1.25rem, 3.5vw, 2.25rem) !important;
     }
     .lp-inner--split .lp-h1 {
         margin-bottom: 0.85rem !important;
@@ -603,28 +629,25 @@ else:
         for k in _icon_order
     )
 
-    _hero_title_col, _hero_cta_col = st.columns([2.55, 0.95], gap="small")
-    with _hero_title_col:
-        st.markdown(
-            f"""
-    <div class="lp-hero lp-hero--split" style="{bg}">
-      <div class="lp-inner lp-inner--split">
-        <div class="lp-badge">Match video</div>
-        <h1 class="lp-h1">From kickoff<br><em>to data</em></h1>
-        <div class="lp-hero-icons">{_hero_icons_html}</div>
-      </div>
-    </div>
-    """,
-            unsafe_allow_html=True,
-        )
-    with _hero_cta_col:
-        nav_button("Enter pipeline", "Upload", key="lp_enter_hero")
+    st.markdown(
+        f"""
+        <div class="lp-hero lp-hero--split" style="{bg}">
+            <div class="lp-inner lp-inner--split">
+                <a class="lp-hero-enter" href="?page=Upload" target="_self" rel="noopener">Enter pipeline</a>
+                <div class="lp-badge">Match video</div>
+                <h1 class="lp-h1">From kickoff<br><em>to data</em></h1>
+                <div class="lp-hero-icons">{_hero_icons_html}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     st.markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
 
     st.markdown('<div class="lp-about-spacer"></div>', unsafe_allow_html=True)
-    if _IMG_B64:
-        _about_url = f"data:image/jpeg;base64,{_IMG_B64}"
+    if _ABOUT_IMG_B64:
+        _about_url = f"data:image/png;base64,{_ABOUT_IMG_B64}"
     else:
         _about_url = (
             "data:image/svg+xml;base64,"
