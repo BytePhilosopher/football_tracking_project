@@ -554,11 +554,11 @@ else:
         text-align: center;
     }
     .lp-team-photo {
-        width: 100%;
-        max-width: 112px;
-        aspect-ratio: 1;
+        width: 112px;
+        height: 112px;
         border-radius: 50%;
         object-fit: cover;
+        object-position: center;
         margin: 0 auto 0.65rem;
         display: block;
         border: 2px solid rgba(220,38,38,0.2);
@@ -672,19 +672,19 @@ else:
     st.markdown(_car_html, unsafe_allow_html=True)
 
     _team = [
-        ("Marcus Webb", "CV · detection"),
-        ("Elena Kovač", "MOT · tracking"),
-        ("James Okonkwo", "App · pipeline"),
-        ("Sofia Andersson", "Data · analytics"),
-        ("Tomás Ribeiro", "Ops · infra"),
+        ("tse-coder", "Core contributor"),
+        ("BytePhilosopher", "Core contributor"),
+        ("yoseph404", "Core contributor"),
+        ("halafiCodes", "Core contributor"),
+        ("abeladamushumet", "Core contributor"),
     ]
     _cards = "".join(
         f'<div class="lp-team-card">'
-        f'<img class="lp-team-photo" src="{_team_avatar_data_uri(i)}" width="112" height="112" alt="" />'
+        f'<img class="lp-team-photo" src="https://github.com/{name}.png" width="112" height="112" alt="{name}" />'
         f'<div class="lp-team-name">{name}</div>'
         f'<div class="lp-team-role">{role}</div>'
         f"</div>"
-        for i, (name, role) in enumerate(_team)
+        for name, role in _team
     )
     st.markdown(
         f"""
