@@ -10,7 +10,7 @@ import os
 import cv2
 import streamlit as st
 from config import PROCESSED_DIR, DEFAULT_TARGET_FPS, DEFAULT_RESIZE_W
-from utils import page_header, render_pipeline, nav_button, metric_card
+from utils import page_header, metric_card
 
 
 def _video_info(path: str) -> dict:
@@ -32,17 +32,13 @@ def render():
                 "This page shows details and lets you adjust settings.")
 
     done = st.session_state.get("processed_video") is not None
-    render_pipeline(active=-1, done_up_to=1 if done else 0)
     st.markdown("---")
 
     raw = st.session_state.get("uploaded_video")
     proc = st.session_state.get("processed_video")
 
     if not raw or not os.path.exists(raw):
-        st.warning("No video uploaded yet.")
-        _, r = st.columns([3, 1])
-        with r:
-            nav_button("Go to Upload", "Upload")
+        st.warning("No video uploaded yet. Use the top navigation bar to go to Upload.")
         return
 
     # Show raw video info
@@ -120,10 +116,5 @@ def render():
             st.caption("Preprocessed")
             st.video(proc)
 
-    # Navigation
     st.markdown("---")
-    left, _, right = st.columns([1, 2, 1])
-    with left:
-        nav_button("Back to Upload", "Upload", key="pre_back")
-    with right:
-        nav_button("Run Analysis", "Analysis", key="pre_next")
+    st.caption("Use the top navigation bar to switch pages.")

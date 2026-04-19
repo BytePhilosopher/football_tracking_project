@@ -68,13 +68,15 @@ def inject_custom_css():
         align-items: center;
         gap: 0.25rem;
     }}
-    .nav-link {{
+    .nav-link,
+    .nav-link:visited,
+    .nav-link:active {{
         padding: 0.4rem 1rem;
         border-radius: 6px;
         font-size: 0.8rem;
         font-weight: 500;
-        color: {TEXT_MUTED};
-        text-decoration: none;
+        color: {TEXT_MUTED} !important;
+        text-decoration: none !important;
         cursor: pointer;
         transition: all 0.2s;
         border: 1px solid transparent;
@@ -385,17 +387,20 @@ def inject_custom_css():
 
 
 def render_navbar():
-    """Render a horizontal top navigation bar."""
+    """Render the single top navigation bar with clickable styled links."""
     current = st.session_state.get("page", "Home")
+
+    # Sync page from URL query parameter when links are clicked.
+    q_page = st.query_params.get("page", current)
+    if isinstance(q_page, list):
+        q_page = q_page[0] if q_page else current
+    if q_page in NAV_PAGES and q_page != current:
+        st.session_state.page = q_page
+        current = q_page
 
     has_upload = st.session_state.get("uploaded_video") is not None
     has_preprocess = st.session_state.get("processed_video") is not None
     has_analysis = st.session_state.get("analysis_done", False)
-
-    links_html = ""
-    for name in NAV_PAGES:
-        cls = "nav-link active" if current == name else "nav-link"
-        links_html += f'<span class="{cls}" id="nav-{name}">{name}</span>'
 
     # Status dots
     dots = [
@@ -408,6 +413,14 @@ def render_navbar():
         dot_cls = "nav-dot done" if done else "nav-dot pending"
         dots_html += f'<span class="{dot_cls}" title="{label}"></span>'
 
+    links_html = ""
+    for name in NAV_PAGES:
+        cls = "nav-link active" if current == name else "nav-link"
+        links_html += (
+            f'<a class="{cls}" href="?page={name}" target="_self" rel="noopener">'
+            f'{name}</a>'
+        )
+
     st.markdown(f"""
     <div class="navbar">
         <div class="nav-brand">Football<span>Tracker</span></div>
@@ -415,20 +428,6 @@ def render_navbar():
         <div class="nav-status">{dots_html}</div>
     </div>
     """, unsafe_allow_html=True)
-
-    # Use streamlit columns for actual clickable navigation
-    cols = st.columns(len(NAV_PAGES))
-    for i, name in enumerate(NAV_PAGES):
-        with cols[i]:
-            if current != name:
-                if st.button(name, key=f"topnav_{name}",
-                             use_container_width=True, type="secondary"):
-                    st.session_state.page = name
-                    st.rerun()
-            else:
-                st.button(name, key=f"topnav_{name}",
-                          use_container_width=True, type="primary",
-                          disabled=False)
 
 
 def page_header(title: str, subtitle: str = ""):
@@ -474,6 +473,7 @@ def render_pipeline(active: int = -1, done_up_to: int = -1):
 def nav_button(label: str, target: str, key: str | None = None):
     if st.button(label, use_container_width=True, type="primary", key=key):
         st.session_state.page = target
+        st.query_params["page"] = target
         st.rerun()
 
 

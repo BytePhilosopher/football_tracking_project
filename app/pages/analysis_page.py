@@ -21,7 +21,7 @@ from config import (
     DEFAULT_TARGET_FPS, DEFAULT_RESIZE_W,
 )
 from utils import (
-    page_header, render_pipeline, nav_button, metric_card,
+    page_header, metric_card,
     ACCENT, TEXT_PRIMARY, TEXT_MUTED, BG_CARD,
 )
 
@@ -294,16 +294,12 @@ def render():
     if analysis_done:
         done_up_to = 3
 
-    render_pipeline(done_up_to=done_up_to)
     st.markdown("---")
 
     raw_video = st.session_state.get("uploaded_video")
 
     if not raw_video or not os.path.exists(raw_video):
-        st.warning("No video uploaded. Go to the Upload page first.")
-        _, r = st.columns([3, 1])
-        with r:
-            nav_button("Go to Upload", "Upload")
+        st.warning("No video uploaded. Use the top navigation bar to open Upload.")
         return
 
     # ── Show what will be processed ──────────────────────────────────────────
@@ -409,7 +405,7 @@ def render():
                 st.session_state.pop("tracked_video", None)
                 st.rerun()
         with col_results:
-            nav_button("View Results", "Results", key="an_to_results")
+            st.info("Use the top navigation bar to open Results.")
 
     else:
         st.markdown(f"""
@@ -442,6 +438,7 @@ def render():
                 status.empty()
                 st.success("Pipeline complete. Redirecting to results...")
                 st.session_state.page = "Results"
+                st.query_params["page"] = "Results"
                 st.rerun()
 
             except Exception as e:
@@ -449,11 +446,5 @@ def render():
                 import traceback
                 st.code(traceback.format_exc())
 
-    # Navigation
     st.markdown("---")
-    left, _, right = st.columns([1, 2, 1])
-    with left:
-        nav_button("Back to Upload", "Upload", key="an_back")
-    with right:
-        if analysis_done:
-            nav_button("View Results", "Results", key="an_next")
+    st.caption("Use the top navigation bar to switch pages.")

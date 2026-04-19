@@ -16,7 +16,7 @@ st.set_page_config(
 )
 
 from utils import (
-    inject_custom_css, render_navbar, page_header, render_pipeline,
+    inject_custom_css, render_navbar, page_header,
     nav_button, setup_sidebar, metric_card,
     ACCENT, ACCENT_LIGHT, TEXT_PRIMARY, TEXT_MUTED, BG_CARD, BG_DARK, BORDER,
 )

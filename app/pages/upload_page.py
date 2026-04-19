@@ -4,13 +4,12 @@
 import os
 import streamlit as st
 from config import RAW_DIR, VIDEO_EXTENSIONS
-from utils import page_header, render_pipeline, nav_button, metric_card
+from utils import page_header, nav_button, metric_card
 
 
 def render():
     page_header("Upload Video",
                 "Provide a match video to start the automated pipeline.")
-    render_pipeline(active=0)
     st.markdown("---")
 
     left, right = st.columns([3, 2])
@@ -73,7 +72,6 @@ def render():
         else:
             st.info("Upload or select a video.")
 
-    # ── Auto-advance ─────────────────────────────────────────────────────────
     st.markdown("---")
     _, right_col = st.columns([3, 1])
     with right_col:
@@ -81,4 +79,4 @@ def render():
             nav_button("Next: Run Analysis", "Analysis")
         else:
             st.button("Next: Run Analysis", disabled=True,
-                       use_container_width=True)
+                      use_container_width=True)

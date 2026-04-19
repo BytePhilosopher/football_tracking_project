@@ -10,7 +10,7 @@ import streamlit as st
 
 from config import INSIGHTS_DIR, ANNOTATIONS_DIR, PROCESSED_DIR
 from utils import (
-    page_header, render_pipeline, nav_button, metric_card,
+    page_header, metric_card,
     ACCENT, TEXT_PRIMARY, TEXT_MUTED, BG_CARD,
 )
 
@@ -57,7 +57,6 @@ def _find_tracked_video() -> str | None:
 def render():
     page_header("Results",
                 "Pipeline output: possession, player stats, speed analysis, and downloads.")
-    render_pipeline(done_up_to=3)
     st.markdown("---")
 
     # ── Load all data ────────────────────────────────────────────────────────
@@ -68,10 +67,7 @@ def render():
     tracked_video = _find_tracked_video()
 
     if player_df is None and poss_df is None and track_df is None:
-        st.warning("No results found. Run the analysis pipeline first.")
-        _, r = st.columns([3, 1])
-        with r:
-            nav_button("Go to Analysis", "Analysis")
+        st.warning("No results found. Use the top navigation bar to open Analysis and run the pipeline.")
         return
 
     # ── Summary metrics ──────────────────────────────────────────────────────
@@ -339,19 +335,14 @@ def render():
                 mime="application/json", use_container_width=True,
             )
 
-    # ── Navigation ───────────────────────────────────────────────────────────
+    # ── Session action ───────────────────────────────────────────────────────
     st.markdown("---")
-    left, center, right = st.columns([1, 1, 1])
-    with left:
-        nav_button("Back to Analysis", "Analysis", key="res_back")
-    with center:
-        if st.button("Start New Analysis", use_container_width=True):
-            # Reset all pipeline state
-            for k in ["uploaded_video", "uploaded_video_name",
-                      "processed_video", "analysis_done",
-                      "analysis_results", "tracked_video"]:
-                st.session_state.pop(k, None)
-            st.session_state.page = "Upload"
-            st.rerun()
-    with right:
-        nav_button("Back to Home", "Home", key="res_home")
+    if st.button("Start New Analysis", use_container_width=True):
+        # Reset all pipeline state
+        for k in ["uploaded_video", "uploaded_video_name",
+                  "processed_video", "analysis_done",
+                  "analysis_results", "tracked_video"]:
+            st.session_state.pop(k, None)
+        st.session_state.page = "Upload"
+        st.query_params["page"] = "Upload"
+        st.rerun()
