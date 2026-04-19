@@ -310,6 +310,7 @@ def render_navbar():
             if st.button(name, key=f"nav_{name}", use_container_width=True,
                          type="primary" if current == name else "secondary"):
                 st.session_state.page = name
+                st.query_params["page"] = name
                 st.rerun()
 
     # Close navbar div + dots
@@ -355,11 +356,13 @@ def render_pipeline(active: int = -1, done_up_to: int = -1):
 def nav_button(label: str, target: str, key: str | None = None):
     if st.button(label, use_container_width=True, type="primary", key=key):
         st.session_state.page = target
+        st.query_params["page"] = target
         st.rerun()
 
 
 def nav_to(page: str):
     st.session_state.page = page
+    st.query_params["page"] = page
     st.rerun()
 
 
