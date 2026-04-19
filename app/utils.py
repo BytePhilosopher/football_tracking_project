@@ -363,5 +363,23 @@ def nav_to(page: str):
     st.rerun()
 
 
+def render_site_footer():
+    st.markdown(
+        """
+        <div style="
+            margin-top: 2rem;
+            padding-top: 0.9rem;
+            border-top: 1px solid rgba(255,255,255,0.04);
+            text-align: center;
+            font-size: 0.72rem;
+            color: #737380;
+        ">
+            Football Tracker Pipeline
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def setup_sidebar():
     pass
